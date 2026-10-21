@@ -40,6 +40,7 @@ import com.nuvio.app.core.ui.rememberPosterCardStyleUiState
 import com.nuvio.app.core.ui.withDuplicateSafeLazyKeys
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.addons.enabledAddons
+import com.nuvio.app.features.servers.ServerRepository
 import com.nuvio.app.features.addons.firstEnabledManifestError
 import com.nuvio.app.features.cloud.CloudLibraryContentType
 import com.nuvio.app.features.cloud.CloudLibraryRepository
@@ -507,10 +508,12 @@ fun HomeScreen(
         )
     }
 
-    val customPosterPattern by com.nuvio.app.core.poster.CustomPosterUrlRepository.let { repo ->
+    val cwPosterPattern by com.nuvio.app.core.poster.CustomPosterUrlRepository.let { repo ->
         repo.ensureLoaded()
-        repo.pattern
-    }.collectAsStateWithLifecycle()
+        kotlinx.coroutines.flow.combine(repo.pattern, repo.enabledScreens) { pattern, screens ->
+            if (com.nuvio.app.core.poster.CustomPosterScreen.CONTINUE_WATCHING in screens) pattern else ""
+        }
+    }.collectAsStateWithLifecycle(initialValue = com.nuvio.app.core.poster.CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.CONTINUE_WATCHING))
 
     val allContinueWatchingItems = remember(
         visibleContinueWatchingEntries,
@@ -519,7 +522,7 @@ fun HomeScreen(
         nextUpSuppressedSeriesIds,
         continueWatchingPreferences.sortMode,
         cloudLibraryUiState,
-        customPosterPattern,
+        cwPosterPattern,
     ) {
         buildHomeContinueWatchingItems(
             visibleEntries = visibleContinueWatchingEntries,
@@ -530,15 +533,28 @@ fun HomeScreen(
             todayIsoDate = CurrentDateProvider.todayIsoDate(),
             cloudLibraryUiState = cloudLibraryUiState,
         ).let { items ->
-            items.withCustomPosterUrls(customPosterPattern)
+            items.withCustomPosterUrls(cwPosterPattern)
         }
     }
+    val shuffleCandidates = remember(completedSeriesCandidates, continueWatchingPreferences.dismissedNextUpKeys) {
+        completedSeriesCandidates.filter { candidate ->
+            nextUpDismissKey(candidate.content.id, candidate.seasonNumber, candidate.episodeNumber) !in
+                continueWatchingPreferences.dismissedNextUpKeys
+        }
+    }
+    val rawShuffledContinueWatchingItems = rememberShuffleHomeItems(
+        activeProfileId, allContinueWatchingItems, shuffleCandidates,
+        watchProgressUiState.entries, watchedUiState.watchedKeys, visibleContinueWatchingEntries,
+    )
+    val shuffledContinueWatchingItems = remember(rawShuffledContinueWatchingItems, cwPosterPattern) {
+        rawShuffledContinueWatchingItems.withCustomPosterUrls(cwPosterPattern)
+    }
     val (continueWatchingItems, upcomingItems) = remember(
-        allContinueWatchingItems,
+        shuffledContinueWatchingItems,
         continueWatchingPreferences.sortMode,
     ) {
         splitUpcomingItems(
-            items = allContinueWatchingItems,
+            items = shuffledContinueWatchingItems,
             mode = continueWatchingPreferences.sortMode,
         )
     }
@@ -835,6 +851,11 @@ fun HomeScreen(
     }
 
     val hasActiveAddons = enabledAddons.any { it.manifest != null }
+    val serversUiState by remember {
+        ServerRepository.ensureLoaded()
+        ServerRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val hasServerLibraries = serversUiState.enabledConnections.any { it.selectedLibraries.isNotEmpty() }
     val addonManifestsLoading = enabledAddons.any { it.isRefreshing }
     val addonManifestErrorMessage = enabledAddons.firstEnabledManifestError()
     val isResolvingHeroSources = addonManifestsLoading || homeUiState.isLoading
@@ -1034,7 +1055,7 @@ fun HomeScreen(
                     }
                 }
 
-                !hasActiveAddons && !hasRenderableCollectionRows -> {
+                !hasActiveAddons && !hasServerLibraries && !hasRenderableCollectionRows -> {
                     homeContinueWatchingSections(
                         preferences = continueWatchingPreferences,
                         continueWatchingItems = continueWatchingItems,
@@ -1083,8 +1104,8 @@ fun HomeScreen(
                                     modifier = Modifier.padding(
                                         horizontal = if (isDesktop) homeSectionPadding else 16.dp,
                                     ),
-                                    title = stringResource(Res.string.compose_search_empty_no_active_addons_title),
-                                    message = stringResource(Res.string.home_empty_no_active_addons_message),
+                                    title = stringResource(Res.string.home_empty_no_sources_title),
+                                    message = stringResource(Res.string.home_empty_no_sources_message),
                                 )
                             }
                         }
@@ -1831,7 +1852,7 @@ internal fun buildHomeInProgressCacheSnapshot(
     }
 }
 
-private fun CompletedSeriesCandidate.toContinueWatchingSeed(meta: com.nuvio.app.features.details.MetaDetails) =
+internal fun CompletedSeriesCandidate.toContinueWatchingSeed(meta: com.nuvio.app.features.details.MetaDetails) =
     WatchProgressEntry(
         contentType = content.type,
         parentMetaId = content.id,

@@ -75,12 +75,12 @@ import kotlinx.coroutines.flow.map
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_retry
 import nuvio.composeapp.generated.resources.compose_nav_search
+import nuvio.composeapp.generated.resources.home_empty_no_sources_title
+import nuvio.composeapp.generated.resources.search_empty_no_sources_message
 import nuvio.composeapp.generated.resources.compose_search_clear
 import nuvio.composeapp.generated.resources.compose_search_discover_title
 import nuvio.composeapp.generated.resources.compose_search_empty_failed_message
 import nuvio.composeapp.generated.resources.compose_search_empty_failed_title
-import nuvio.composeapp.generated.resources.compose_search_empty_no_active_addons_message
-import nuvio.composeapp.generated.resources.compose_search_empty_no_active_addons_title
 import nuvio.composeapp.generated.resources.compose_search_empty_no_results_message
 import nuvio.composeapp.generated.resources.compose_search_empty_no_results_title
 import nuvio.composeapp.generated.resources.compose_search_empty_no_search_catalogs_message
@@ -106,6 +106,7 @@ fun SearchScreen(
     ScreenActivityEffect(listState) { screenActive ->
         if (!screenActive) {
             isSearchFocused = false
+            focusRequester.freeFocus()
             listState.stopScroll()
         }
     }
@@ -282,11 +283,17 @@ fun SearchScreen(
                     androidx.compose.foundation.layout.Box(modifier = Modifier.padding(horizontal = 16.dp)) {
                         NuvioInputField(
                             value = query,
-                            onValueChange = { query = it },
+                            onValueChange = {
+                                focusRequester.captureFocus()
+                                query = it
+                            },
                             placeholder = stringResource(Res.string.compose_search_placeholder),
                             modifier = Modifier
                                 .focusRequester(focusRequester)
-                                .onFocusChanged { isSearchFocused = it.isFocused },
+                                .onFocusChanged {
+                                    isSearchFocused = it.isFocused
+                                    if (query.isNotBlank()) focusRequester.captureFocus()
+                                },
                             trailingContent = if (query.isNotBlank()) {
                                 {
                                     IconButton(onClick = { query = "" }) {
@@ -309,6 +316,7 @@ fun SearchScreen(
 
         if (query.isBlank()) {
             if (isSearchFocused && recentSearches.isNotEmpty()) {
+                focusRequester.captureFocus()
                 item(key = "recent_searches") {
                     SearchRecentSection(
                         recentSearches = recentSearches,
@@ -440,8 +448,8 @@ private fun SearchEmptyStateCard(
 
     when (reason) {
         SearchEmptyStateReason.NoActiveAddons -> {
-            title = stringResource(Res.string.compose_search_empty_no_active_addons_title)
-            message = stringResource(Res.string.compose_search_empty_no_active_addons_message)
+            title = stringResource(Res.string.home_empty_no_sources_title)
+            message = stringResource(Res.string.search_empty_no_sources_message)
         }
 
         SearchEmptyStateReason.NoSearchCatalogs -> {

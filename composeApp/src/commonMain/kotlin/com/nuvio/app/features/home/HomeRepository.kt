@@ -16,6 +16,7 @@ import com.nuvio.app.features.collection.CollectionSource
 import com.nuvio.app.features.collection.TmdbCollectionSourceResolver
 import com.nuvio.app.features.collection.catalogRouteKey
 import com.nuvio.app.features.collection.findCollectionCatalog
+import com.nuvio.app.features.servers.ServerCatalog
 import com.nuvio.app.features.trakt.TraktPublicListSourceResolver
 import com.nuvio.app.features.watchprogress.CurrentDateProvider
 import com.nuvio.app.isDesktop
@@ -181,7 +182,7 @@ object HomeRepository {
         val preferences = snapshot.preferences
         val todayIsoDate = if (snapshot.hideUnreleasedContent) CurrentDateProvider.todayIsoDate() else null
         CustomPosterUrlRepository.ensureLoaded()
-        val posterPattern = CustomPosterUrlRepository.pattern.value
+        val posterPattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.HOME)
         fun HomeCatalogSection.withReleaseFilter(): HomeCatalogSection =
             if (todayIsoDate == null) this else filterReleasedItems(todayIsoDate)
         fun HomeCatalogSection.withPosterOverlay(): HomeCatalogSection =
@@ -234,8 +235,9 @@ object HomeRepository {
     }
 
     private suspend fun HomeCatalogDefinition.toSection(forceRefresh: Boolean): HomeCatalogSection {
+        serverConnectionId?.let { connectionId -> return toServerSection(connectionId) }
         CustomPosterUrlRepository.ensureLoaded()
-        val pattern = CustomPosterUrlRepository.pattern.value
+        val pattern = CustomPosterUrlRepository.patternForScreen(com.nuvio.app.core.poster.CustomPosterScreen.HOME)
         val page = if (isDesktop) {
             fetchDesktopHomePreview(forceRefresh)
         } else {
@@ -247,7 +249,7 @@ object HomeRepository {
                 forceRefresh = forceRefresh,
             )
         }
-        val items = page.items.withCustomPosterUrls(pattern)
+        val items = if (pattern.isNotBlank()) page.items.withCustomPosterUrls(pattern) else page.items
         if (items.isEmpty()) {
             return HomeCatalogSection(
                 key = key,
@@ -309,6 +311,21 @@ object HomeRepository {
             items = items.take(DESKTOP_HOME_CATALOG_PREVIEW_FETCH_LIMIT),
             rawItemCount = rawItemCount,
             nextSkip = nextSkip,
+        )
+    }
+
+    private suspend fun HomeCatalogDefinition.toServerSection(connectionId: String): HomeCatalogSection {
+        val target = CatalogTarget.Server(connectionId, catalogId, type)
+        val page = ServerCatalog.page(target, skip = 0, limit = HOME_CATALOG_PREVIEW_FETCH_LIMIT)
+        return HomeCatalogSection(
+            key = key,
+            title = defaultTitle,
+            subtitle = addonName,
+            addonName = addonName,
+            target = target,
+            items = page.items,
+            availableItemCount = page.rawItemCount,
+            hasMore = page.nextSkip != null,
         )
     }
 
